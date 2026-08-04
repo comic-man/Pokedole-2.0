@@ -1,0 +1,764 @@
+﻿const POKE_API = "https://pokeapi.co/api/v2";
+const TCG_API = "https://api.pokemontcg.io/v2/cards";
+const CACHE_KEY = "pokedole:v2:pokedex";
+
+const CHALLENGES = {
+  attributes: {
+    label: "Attributes",
+    prompt: "Which Pokemon matches this picture?",
+    hint: "Green is exact, yellow is partial, red is incorrect.",
+  },
+  card: {
+    label: "Card Blur",
+    prompt: "Which Pokemon is on this card?",
+    hint: "Each wrong guess unblurs the card a bit.",
+  },
+  entry: {
+    label: "Dex Entry",
+    prompt: "Which Pokemon has this Pokedex description?",
+    hint: "The Pokemon name is hidden from the entry.",
+  },
+  silhouette: {
+    label: "Silhouette",
+    prompt: "Which Pokemon is this silhouette of?",
+    hint: "Each wrong guess zooms out a bit.",
+  },
+};
+
+const CHALLENGE_ORDER = ["attributes", "card", "entry", "silhouette"];
+const evolutionStageCache = new Map();
+
+const state = {
+  roundMode: "daily",
+  challenge: "attributes",
+  generations: [],
+  activeGenerations: new Set(),
+  pokemon: [],
+  answers: new Map(),
+  answer: null,
+  answerDetails: null,
+  card: null,
+  guesses: [],
+  completed: new Map(),
+  unlockedIndex: 0,
+  finished: false,
+};
+
+const els = {
+  dailyBtn: document.querySelector("#dailyBtn"),
+  randomBtn: document.querySelector("#randomBtn"),
+  challengeButtons: [...document.querySelectorAll(".challenge-button")],
+  generationFilters: document.querySelector("#generationFilters"),
+  guessForm: document.querySelector("#guessForm"),
+  guessInput: document.querySelector("#guessInput"),
+  guessButton: document.querySelector("#guessButton"),
+  pokemonOptions: document.querySelector("#pokemonOptions"),
+  status: document.querySelector("#status"),
+  guessBody: document.querySelector("#guessBody"),
+  simpleBoard: document.querySelector("#simpleBoard"),
+  attributeBoard: document.querySelector("#attributeBoard"),
+  guessCount: document.querySelector("#guessCount"),
+  roundLabel: document.querySelector("#roundLabel"),
+  clueStage: document.querySelector("#clueStage"),
+  pokemonImage: document.querySelector("#pokemonImage"),
+  cardImage: document.querySelector("#cardImage"),
+  entryText: document.querySelector("#entryText"),
+  cluePrompt: document.querySelector("#cluePrompt"),
+  clueHint: document.querySelector("#clueHint"),
+  resultsPanel: document.querySelector("#resultsPanel"),
+};
+
+init();
+
+async function init() {
+  setBusy(true);
+  bindEvents();
+
+  try {
+    const data = await loadPokedex();
+    state.generations = data.generations;
+    state.pokemon = data.pokemon;
+    state.activeGenerations = new Set(state.generations.map((gen) => gen.id));
+    renderGenerationFilters();
+    renderDatalist();
+    await startRound("daily");
+  } catch (error) {
+    console.error(error);
+    setStatus("Could not load Pokemon data. Check your connection and refresh.", "lose");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function bindEvents() {
+  els.dailyBtn.addEventListener("click", () => startRound("daily"));
+  els.randomBtn.addEventListener("click", () => startRound("random"));
+  els.guessForm.addEventListener("submit", handleGuess);
+  els.guessInput.addEventListener("input", () => renderDatalist(els.guessInput.value));
+  els.challengeButtons.forEach((button) => {
+    button.addEventListener("click", () => switchChallenge(button.dataset.challenge));
+  });
+}
+
+async function loadPokedex() {
+  const cached = readCache();
+  if (cached) return cached;
+
+  const generationList = await fetchJson(`${POKE_API}/generation?limit=100`);
+  const generationRefs = generationList.results
+    .map((gen) => ({ ...gen, id: idFromUrl(gen.url) }))
+    .filter((gen) => Number.isFinite(gen.id))
+    .sort((a, b) => a.id - b.id);
+
+  const generations = await Promise.all(
+    generationRefs.map(async (gen) => {
+      const detail = await fetchJson(gen.url);
+      return {
+        id: detail.id,
+        name: localName(detail.names, romanGeneration(detail.id)),
+        region: titleCase(detail.main_region?.name || ""),
+        species: detail.pokemon_species.map((species) => ({
+          id: idFromUrl(species.url),
+          name: species.name,
+          displayName: formatPokemonName(species.name),
+          generation: detail.id,
+        })),
+      };
+    }),
+  );
+
+  const pokemon = generations
+    .flatMap((gen) => gen.species)
+    .filter((entry) => Number.isFinite(entry.id))
+    .sort((a, b) => a.id - b.id);
+
+  const payload = { generations, pokemon, savedAt: Date.now() };
+  localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+  return payload;
+}
+
+function readCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    const isFresh = cached && Date.now() - cached.savedAt < 1000 * 60 * 60 * 24 * 7;
+    return isFresh ? cached : null;
+  } catch {
+    return null;
+  }
+}
+
+async function startRound(roundMode = state.roundMode) {
+  if (!state.pokemon.length) return;
+
+  state.roundMode = roundMode;
+  state.challenge = CHALLENGE_ORDER[0];
+  state.answers.clear();
+  state.completed.clear();
+  state.unlockedIndex = 0;
+  hideResults();
+  updateRoundButtons();
+  await setupChallenge(state.challenge);
+}
+
+async function switchChallenge(challenge) {
+  if (!CHALLENGES[challenge] || challenge === state.challenge) return;
+  if (!isChallengeUnlocked(challenge)) {
+    setStatus(`Finish ${CHALLENGES[CHALLENGE_ORDER[state.unlockedIndex]].label} to unlock that game.`);
+    updateChallengeButtons();
+    return;
+  }
+
+  if (state.completed.has(challenge)) {
+    const result = state.completed.get(challenge);
+    setStatus(`${CHALLENGES[challenge].label} is already complete: ${result.guesses} ${pluralize("guess", result.guesses)}.`);
+    updateChallengeButtons();
+    return;
+  }
+
+  state.challenge = challenge;
+  await setupChallenge(challenge);
+}
+
+async function setupChallenge(challenge) {
+  state.challenge = challenge;
+  state.guesses = [];
+  state.finished = false;
+  state.answerDetails = null;
+  state.card = null;
+  els.guessBody.innerHTML = "";
+  els.simpleBoard.innerHTML = "";
+  els.guessInput.value = "";
+  resetClueStage();
+  updateChallengeButtons();
+  updateBoards();
+  updateGuessCount();
+  hideResults();
+  setBusy(true);
+  setStatus("Choosing a mystery Pokemon...");
+
+  try {
+    state.answer = getAnswerForChallenge(challenge);
+    const details = await getPokemonDetails(state.answer);
+    state.answerDetails = details;
+
+    if (challenge === "card") {
+      state.card = await getCardArt(state.answer);
+    }
+
+    renderClue();
+    setStatus(`${CHALLENGES[challenge].label} ready. Keep guessing until you solve it.`);
+  } catch (error) {
+    console.error(error);
+    setStatus("That mode could not load completely. Try random or another generation.", "lose");
+  } finally {
+    setBusy(false);
+  }
+}
+function getAnswerForChallenge(challenge) {
+  const pool = state.pokemon.filter((entry) => state.activeGenerations.has(entry.generation));
+  const key = `${state.roundMode}:${challenge}:${[...state.activeGenerations].join("-")}`;
+  if (state.answers.has(key)) return state.answers.get(key);
+
+  const offset = Object.keys(CHALLENGES).indexOf(challenge) * 9973;
+  const index = state.roundMode === "daily"
+    ? dailyIndex(pool.length, offset)
+    : cryptoRandom(pool.length);
+  const answer = pool[index];
+  state.answers.set(key, answer);
+  return answer;
+}
+
+function resetClueStage() {
+  els.clueStage.className = `clue-stage stage-${state.challenge}`;
+  els.clueStage.style.removeProperty("--blur");
+  els.clueStage.style.removeProperty("--zoom");
+  els.clueStage.style.removeProperty("--pan-x");
+  els.clueStage.style.removeProperty("--pan-y");
+  els.pokemonImage.removeAttribute("src");
+  els.cardImage.removeAttribute("src");
+  els.entryText.textContent = "";
+  els.cluePrompt.textContent = CHALLENGES[state.challenge].prompt;
+  els.clueHint.textContent = CHALLENGES[state.challenge].hint;
+}
+
+function renderClue() {
+  const details = state.answerDetails;
+  els.roundLabel.textContent = `${state.roundMode === "daily" ? "Daily" : "Random"} - Gen ${details.generation}`;
+
+  if (state.challenge === "attributes") {
+    els.clueStage.classList.add("no-visual");
+    els.cluePrompt.textContent = "Guess the Pokemon from attribute feedback.";
+    return;
+  }
+
+  if (state.challenge === "card") {
+    if (state.card) {
+      els.cardImage.src = state.card.images.large;
+      els.cardImage.alt = "Blurred Pokemon card";
+      els.clueStage.classList.add("has-card");
+      updateProgressiveReveal();
+    } else {
+      els.cluePrompt.textContent = "No TCG card art was found for this Pokemon.";
+    }
+    return;
+  }
+
+  if (state.challenge === "entry") {
+    els.entryText.textContent = redactedEntry(details);
+    els.clueStage.classList.add("has-entry");
+    return;
+  }
+
+  if (state.challenge === "silhouette") {
+    els.pokemonImage.src = details.sprite;
+    els.pokemonImage.alt = "Black Pokemon silhouette";
+    els.clueStage.classList.add("has-pokemon");
+    updateProgressiveReveal();
+  }
+}
+
+async function handleGuess(event) {
+  event.preventDefault();
+  if (state.finished || !state.answer) return;
+
+  const guess = findGuess(els.guessInput.value);
+  if (!guess) {
+    setStatus("Pick a Pokemon from the list.");
+    return;
+  }
+
+  if (state.guesses.some((entry) => entry.name === guess.name)) {
+    setStatus(`${guess.displayName} is already on the board.`);
+    return;
+  }
+
+  setBusy(true);
+  setStatus(`Checking ${guess.displayName}...`);
+
+  try {
+    const details = await getPokemonDetails(guess);
+    const correct = guess.name === state.answer.name;
+    state.guesses.unshift(details);
+
+    if (state.challenge === "attributes") {
+      renderAttributeGuess(details);
+    } else {
+      renderSimpleGuess(details, correct);
+    }
+
+    els.guessInput.value = "";
+    updateGuessCount();
+    updateProgressiveReveal();
+
+    if (correct) {
+      finishRound();
+    } else {
+      setStatus(`${state.guesses.length} ${pluralize("guess", state.guesses.length)} made. Keep going.`);
+    }
+  } catch (error) {
+    console.error(error);
+    setStatus("That Pokemon could not be checked. Try another guess.");
+  } finally {
+    setBusy(false);
+  }
+}
+async function getPokemonDetails(entry) {
+  if (entry.details) return entry.details;
+
+  const [species, pokemon] = await Promise.all([
+    fetchJson(`${POKE_API}/pokemon-species/${entry.name}`),
+    fetchJson(`${POKE_API}/pokemon/${entry.name}`),
+  ]);
+
+  const chainUrl = species.evolution_chain?.url || "";
+  const chainId = idFromUrl(chainUrl);
+  const evolutionStage = await getEvolutionStage(chainUrl, entry.name);
+  const details = {
+    ...entry,
+    color: species.color?.name || "unknown",
+    habitat: species.habitat?.name || "unknown",
+    isBaby: Boolean(species.is_baby),
+    isLegendary: Boolean(species.is_legendary),
+    isMythical: Boolean(species.is_mythical),
+    evolutionChainId: chainId,
+    evolutionStage,
+    flavorText: bestFlavorText(species.flavor_text_entries),
+    genera: localGenus(species.genera),
+    types: pokemon.types
+      .sort((a, b) => a.slot - b.slot)
+      .map((type) => type.type.name),
+    height: pokemon.height,
+    weight: pokemon.weight,
+    sprite:
+      pokemon.sprites.other?.["official-artwork"]?.front_default ||
+      pokemon.sprites.other?.home?.front_default ||
+      pokemon.sprites.front_default ||
+      "",
+    icon:
+      pokemon.sprites.versions?.["generation-viii"]?.icons?.front_default ||
+      pokemon.sprites.front_default ||
+      "",
+  };
+
+  entry.details = details;
+  return details;
+}
+
+async function getCardArt(entry) {
+  const params = new URLSearchParams({
+    q: `nationalPokedexNumbers:${entry.id}`,
+    orderBy: "-set.releaseDate",
+    pageSize: "20",
+    select: "id,name,nationalPokedexNumbers,images,set",
+  });
+  const result = await fetchJson(`${TCG_API}?${params.toString()}`);
+  const cards = (result.data || []).filter((card) =>
+    card.nationalPokedexNumbers?.includes(entry.id) && card.images?.large,
+  );
+
+  const exact = cards.find((card) => normalize(card.name) === normalize(entry.displayName));
+  const plain = cards.find((card) => !/[ -](ex|gx|v|vmax|vstar|break|mega)\b/i.test(card.name));
+  return exact || plain || cards[0] || null;
+}
+
+function updateProgressiveReveal() {
+  const wrongGuesses = state.guesses.filter((guess) => guess.name !== state.answer.name).length;
+
+  if (state.challenge === "card") {
+    const blur = Math.max(0, 24 - wrongGuesses * 4);
+    els.clueStage.style.setProperty("--blur", `${blur}px`);
+  }
+
+  if (state.challenge === "silhouette") {
+    const zoom = Math.max(1, 2.7 - wrongGuesses * 0.28);
+    const panX = Math.min(0, -18 + wrongGuesses * 2.4);
+    const panY = Math.max(0, 9 - wrongGuesses * 1.1);
+    els.clueStage.style.setProperty("--zoom", String(zoom));
+    els.clueStage.style.setProperty("--pan-x", `${panX}%`);
+    els.clueStage.style.setProperty("--pan-y", `${panY}%`);
+  }
+}
+
+function renderGenerationFilters() {
+  els.generationFilters.innerHTML = "";
+  const all = document.createElement("button");
+  all.type = "button";
+  all.className = "filter-button active";
+  all.textContent = "All";
+  all.addEventListener("click", () => {
+    state.activeGenerations = new Set(state.generations.map((gen) => gen.id));
+    updateFilterButtons();
+    renderDatalist(els.guessInput.value);
+    startRound(state.roundMode);
+  });
+  els.generationFilters.append(all);
+
+  state.generations.forEach((gen) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "filter-button active";
+    button.dataset.generation = String(gen.id);
+    button.textContent = `Gen ${gen.id}`;
+    button.title = `${gen.name}${gen.region ? ` - ${gen.region}` : ""}`;
+    button.addEventListener("click", () => {
+      if (state.activeGenerations.has(gen.id) && state.activeGenerations.size > 1) {
+        state.activeGenerations.delete(gen.id);
+      } else {
+        state.activeGenerations.add(gen.id);
+      }
+      updateFilterButtons();
+      renderDatalist(els.guessInput.value);
+      startRound(state.roundMode);
+    });
+    els.generationFilters.append(button);
+  });
+}
+
+function updateFilterButtons() {
+  const allActive = state.activeGenerations.size === state.generations.length;
+  els.generationFilters.querySelector(".filter-button").classList.toggle("active", allActive);
+  els.generationFilters.querySelectorAll("[data-generation]").forEach((button) => {
+    button.classList.toggle("active", state.activeGenerations.has(Number(button.dataset.generation)));
+  });
+}
+
+function renderDatalist(query = "") {
+  const prefix = normalize(query);
+  const matches = state.pokemon
+    .filter((entry) => state.activeGenerations.has(entry.generation))
+    .filter((entry) => !prefix || normalize(entry.displayName).startsWith(prefix) || normalize(entry.name).startsWith(prefix))
+    .slice(0, prefix ? 40 : 80);
+
+  els.pokemonOptions.innerHTML = matches
+    .map((entry) => `<option value="${escapeHtml(entry.displayName)}"></option>`)
+    .join("");
+}
+
+function renderAttributeGuess(guess) {
+  const answer = state.answerDetails;
+  const row = document.createElement("tr");
+  row.className = "reveal-row";
+  row.innerHTML = `
+    <td class="${cellClass(guess.name === answer.name)}">
+      <div class="pokemon-cell">
+        ${guess.icon ? `<img src="${guess.icon}" alt="" />` : ""}
+        <span>${escapeHtml(guess.displayName)}</span>
+      </div>
+    </td>
+    <td class="${cellClass(typeAt(guess, 0) === typeAt(answer, 0))}">${typeLabel(typeAt(guess, 0))}</td>
+    <td class="${cellClass(typeAt(guess, 1) === typeAt(answer, 1))}">${typeLabel(typeAt(guess, 1))}</td>
+    <td class="${cellClass(guess.generation === answer.generation)}">${hint(guess.generation, answer.generation, "Gen")}</td>
+    <td class="${cellClass(guess.habitat === answer.habitat)}">${escapeHtml(titleCase(guess.habitat))}</td>
+    <td class="${colorClass(guess, answer)}">${escapeHtml(titleCase(guess.color))}</td>
+    <td class="${cellClass(stageValue(guess) === stageValue(answer))}">${stageValue(guess)}</td>
+    <td class="${cellClass(guess.height === answer.height)}">${hint(guess.height * 10, answer.height * 10, "cm")}</td>
+    <td class="${cellClass(guess.weight === answer.weight)}">${hint(guess.weight / 10, answer.weight / 10, "kg")}</td>
+  `;
+  els.guessBody.prepend(row);
+}
+
+function renderSimpleGuess(guess, correct) {
+  const item = document.createElement("div");
+  item.className = `simple-guess ${correct ? "correct" : "wrong"}`;
+  item.innerHTML = `
+    ${guess.icon ? `<img src="${guess.icon}" alt="" />` : ""}
+    <span>${escapeHtml(guess.displayName)}</span>
+  `;
+  els.simpleBoard.prepend(item);
+}
+
+function finishRound() {
+  state.finished = true;
+  state.completed.set(state.challenge, {
+    guesses: state.guesses.length,
+    answer: state.answer.displayName,
+  });
+
+  els.clueStage.classList.add("revealed");
+  els.pokemonImage.alt = state.answer.displayName;
+  els.cardImage.alt = state.card ? state.card.name : state.answer.displayName;
+
+  const currentIndex = CHALLENGE_ORDER.indexOf(state.challenge);
+  const nextChallenge = CHALLENGE_ORDER[currentIndex + 1];
+  if (nextChallenge) {
+    state.unlockedIndex = Math.max(state.unlockedIndex, currentIndex + 1);
+    updateChallengeButtons();
+    setStatus(
+      `Correct. ${state.answer.displayName} took ${state.guesses.length} ${pluralize("guess", state.guesses.length)}. ${CHALLENGES[nextChallenge].label} is unlocked.`,
+      "win",
+    );
+    return;
+  }
+
+  updateChallengeButtons();
+  setStatus(`${state.roundMode === "daily" ? "Daily" : "Random"} complete. You solved all four games.`, "win");
+  renderResults();
+}
+function findGuess(value) {
+  const wanted = normalize(value);
+  return state.pokemon.find(
+    (entry) =>
+      state.activeGenerations.has(entry.generation) &&
+      (normalize(entry.displayName) === wanted || normalize(entry.name) === wanted),
+  );
+}
+
+function updateBoards() {
+  const isAttribute = state.challenge === "attributes";
+  els.attributeBoard.style.display = isAttribute ? "block" : "none";
+  els.simpleBoard.classList.toggle("active", !isAttribute);
+}
+
+function updateRoundButtons() {
+  els.dailyBtn.classList.toggle("active", state.roundMode === "daily");
+  els.randomBtn.classList.toggle("active", state.roundMode === "random");
+}
+
+function updateChallengeButtons() {
+  els.challengeButtons.forEach((button) => {
+    const challenge = button.dataset.challenge;
+    const completed = state.completed.has(challenge);
+    button.classList.toggle("active", challenge === state.challenge);
+    button.classList.toggle("completed", completed);
+    button.classList.toggle("locked", !isChallengeUnlocked(challenge));
+    button.disabled = !isChallengeUnlocked(challenge);
+  });
+}
+
+function updateGuessCount() {
+  els.guessCount.textContent = `${state.guesses.length} ${pluralize("guess", state.guesses.length)}`;
+}
+
+function setBusy(isBusy) {
+  els.guessInput.disabled = isBusy || state.finished;
+  els.guessButton.disabled = isBusy || state.finished;
+  els.dailyBtn.disabled = isBusy;
+  els.randomBtn.disabled = isBusy;
+  els.challengeButtons.forEach((button) => {
+    button.disabled = isBusy || !isChallengeUnlocked(button.dataset.challenge);
+  });
+  els.generationFilters.querySelectorAll("button").forEach((button) => {
+    button.disabled = isBusy;
+  });
+}
+
+function isChallengeUnlocked(challenge) {
+  const index = CHALLENGE_ORDER.indexOf(challenge);
+  return index >= 0 && index <= state.unlockedIndex;
+}
+
+function renderResults() {
+  const rows = CHALLENGE_ORDER.map((challenge) => {
+    const result = state.completed.get(challenge);
+    return `
+      <div class="result-row">
+        <span>${escapeHtml(CHALLENGES[challenge].label)}</span>
+        <strong>${result.guesses} ${pluralize("guess", result.guesses)}</strong>
+        <small>${escapeHtml(result.answer)}</small>
+      </div>
+    `;
+  }).join("");
+
+  const total = [...state.completed.values()].reduce((sum, result) => sum + result.guesses, 0);
+  els.resultsPanel.innerHTML = `
+    <h2>${state.roundMode === "daily" ? "Daily" : "Random"} Results</h2>
+    <div class="result-list">${rows}</div>
+    <p>Total: <strong>${total} ${pluralize("guess", total)}</strong></p>
+  `;
+  els.resultsPanel.classList.add("active");
+}
+
+function hideResults() {
+  els.resultsPanel.classList.remove("active");
+  els.resultsPanel.innerHTML = "";
+}
+
+function pluralize(word, count) {
+  return count === 1 ? word : `${word}s`;
+}
+function setStatus(message, kind = "") {
+  els.status.textContent = message;
+  els.status.className = `status ${kind}`.trim();
+}
+
+function typeAt(entry, index) {
+  return entry.types[index] || "none";
+}
+
+function typeLabel(type) {
+  return escapeHtml(titleCase(type));
+}
+
+function colorClass(guess, answer) {
+  if (guess.color === answer.color) return "hit";
+  if (guess.types.some((type) => answer.types.includes(type))) return "partial";
+  return "miss";
+}
+
+function cellClass(matches) {
+  return matches ? "hit" : "miss";
+}
+
+function hint(value, answerValue, unit) {
+  const label = `${value}${unit ? ` ${unit}` : ""}`;
+  if (Number(value) === Number(answerValue)) return escapeHtml(label);
+  const arrow = Number(value) < Number(answerValue) ? "↑" : "↓";
+  return `<span class="hint"><span>${escapeHtml(label)}</span><span class="arrow">${arrow}</span></span>`;
+}
+
+function stageValue(entry) {
+  return String(entry.evolutionStage || 1);
+}
+
+async function getEvolutionStage(chainUrl, speciesName) {
+  if (!chainUrl) return 1;
+
+  if (!evolutionStageCache.has(chainUrl)) {
+    evolutionStageCache.set(chainUrl, fetchJson(chainUrl));
+  }
+
+  const chain = await evolutionStageCache.get(chainUrl);
+  return findEvolutionDepth(chain.chain, speciesName, 1) || 1;
+}
+
+function findEvolutionDepth(node, speciesName, depth) {
+  if (!node) return null;
+  if (node.species?.name === speciesName) return depth;
+
+  for (const child of node.evolves_to || []) {
+    const found = findEvolutionDepth(child, speciesName, depth + 1);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function bestFlavorText(entries = []) {
+  const english = entries.filter((entry) => entry.language.name === "en");
+  const preferred = english.find((entry) => ["scarlet", "violet", "sword", "shield"].includes(entry.version.name));
+  return cleanFlavorText((preferred || english[0])?.flavor_text || "No Pokedex entry was found.");
+}
+
+function redactedEntry(details) {
+  let text = details.flavorText || "No Pokedex entry was found.";
+  const names = [details.displayName, details.name, ...details.displayName.split(" ")]
+    .filter((name) => name.length > 1)
+    .sort((a, b) => b.length - a.length);
+
+  names.forEach((name) => {
+    text = text.replace(new RegExp(escapeRegExp(name), "gi"), "_____");
+  });
+
+  return `"${text}"`;
+}
+
+function localGenus(genera = []) {
+  return genera.find((entry) => entry.language.name === "en")?.genus || "Pokemon";
+}
+
+function cleanFlavorText(text) {
+  return text.replace(/[\n\f\r]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+function dailyIndex(length, offset = 0) {
+  const date = new Date();
+  const key = `${date.getUTCFullYear()}-${date.getUTCMonth() + 1}-${date.getUTCDate()}:${offset}`;
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % length;
+}
+
+function cryptoRandom(length) {
+  const values = new Uint32Array(1);
+  crypto.getRandomValues(values);
+  return values[0] % length;
+}
+
+function idFromUrl(url) {
+  return Number(url.match(/\/(\d+)\/?$/)?.[1]);
+}
+
+function romanGeneration(id) {
+  const roman = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+  return `Generation ${roman[id - 1] || id}`;
+}
+
+function localName(names, fallback) {
+  return names?.find((entry) => entry.language.name === "en")?.name || fallback;
+}
+
+function formatPokemonName(name) {
+  return name
+    .split("-")
+    .map((part) => {
+      if (part === "f") return "F";
+      if (part === "m") return "M";
+      return titleCase(part);
+    })
+    .join(" ");
+}
+
+function titleCase(value) {
+  return String(value)
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalize(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

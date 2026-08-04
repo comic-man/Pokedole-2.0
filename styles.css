@@ -1,0 +1,608 @@
+﻿:root {
+  color-scheme: light;
+  --bg: #e8f1ec;
+  --ink: #111b17;
+  --muted: #68756f;
+  --line: #c7d4cf;
+  --panel: #ffffff;
+  --panel-soft: #f8fbf9;
+  --deep: #254f69;
+  --deep-2: #1e4056;
+  --green: #3ee487;
+  --green-dark: #1d754c;
+  --gold: #f0cf3f;
+  --red: #f35d42;
+  --blue: #67b6d8;
+  --shadow: 0 18px 55px rgba(16, 30, 24, 0.15);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(103, 182, 216, 0.55), rgba(49, 86, 58, 0.62)),
+    radial-gradient(circle at 16% 82%, rgba(240, 207, 63, 0.28), transparent 24%),
+    var(--bg);
+  color: var(--ink);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.app-shell {
+  width: min(1260px, calc(100% - 28px));
+  margin: 0 auto;
+  padding: 28px 0;
+}
+
+.play-surface {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(199, 212, 207, 0.9);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--green-dark);
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 2.8rem, 3rem);
+  line-height: 1;
+}
+
+.top-actions,
+.guess-row,
+.filters,
+.challenge-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mode-button,
+.challenge-button,
+.filter-button,
+.guess-row button {
+  min-height: 42px;
+  border-radius: 7px;
+  padding: 0 14px;
+  font-weight: 850;
+  background: #e8efec;
+  color: var(--ink);
+}
+
+.mode-button.active,
+.challenge-button.active,
+.filter-button.active,
+.guess-row button {
+  background: var(--green-dark);
+  color: #fff;
+}
+
+.challenge-tabs {
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+  background: #f2f6f4;
+}
+
+.challenge-button {
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.game-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  min-height: 700px;
+}
+
+.clue-panel {
+  padding: 22px;
+  background: #f5edd7;
+  border-right: 1px solid var(--line);
+}
+
+.score-strip,
+.clue-hint {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.clue-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 18px 0 14px;
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.75), transparent 42%),
+    repeating-conic-gradient(from 0deg, rgba(116, 199, 230, 0.45) 0deg 8deg, rgba(239, 250, 255, 0.55) 8deg 16deg),
+    #9bd5e7;
+  border: 6px solid #e7c95d;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.loading-mark {
+  display: grid;
+  place-items: center;
+  width: 42%;
+  aspect-ratio: 1;
+  border: 4px solid rgba(17, 27, 23, 0.78);
+  border-radius: 50%;
+  font-size: 5rem;
+  font-weight: 950;
+  color: rgba(17, 27, 23, 0.78);
+}
+
+.clue-stage.has-pokemon .loading-mark,
+.clue-stage.has-card .loading-mark,
+.clue-stage.has-entry .loading-mark {
+  display: none;
+}
+
+.pokemon-art,
+.card-art {
+  display: none;
+  max-width: 88%;
+  max-height: 88%;
+  object-fit: contain;
+  transition: filter 260ms ease, transform 260ms ease;
+}
+
+.clue-stage.has-pokemon .pokemon-art,
+.clue-stage.has-card .card-art {
+  display: block;
+}
+
+.stage-attributes .pokemon-art {
+  filter: none;
+}
+
+.stage-card {
+  aspect-ratio: 0.74;
+  background: var(--deep);
+}
+
+.stage-card .card-art {
+  max-width: 82%;
+  max-height: 91%;
+  border-radius: 8px;
+  filter: blur(var(--blur, 22px)) saturate(0.8);
+}
+
+.stage-card.revealed .card-art {
+  filter: none;
+}
+
+.stage-silhouette .pokemon-art {
+  filter: brightness(0) contrast(1.25);
+  transform: scale(var(--zoom, 2.5)) translate(var(--pan-x, -16%), var(--pan-y, 8%));
+  transform-origin: 18% 44%;
+}
+
+.stage-silhouette.revealed .pokemon-art {
+  filter: none;
+  transform: scale(1);
+}
+
+.stage-entry {
+  aspect-ratio: 1.08;
+  align-content: center;
+  padding: 26px;
+  background: var(--deep);
+  color: #fff;
+}
+
+.entry-text {
+  display: none;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1.25rem, 2.6vw, 1.85rem);
+  font-weight: 850;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.stage-entry.has-entry .entry-text {
+  display: block;
+}
+
+.clue-prompt {
+  min-height: 28px;
+  margin: 0;
+  color: var(--deep-2);
+  font-weight: 850;
+}
+
+.clue-hint {
+  min-height: 24px;
+  margin: 7px 0 0;
+}
+
+.guess-panel {
+  min-width: 0;
+  padding: 22px;
+  background: var(--panel-soft);
+}
+
+.filters {
+  margin-bottom: 18px;
+}
+
+.filter-button {
+  min-width: 54px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.guess-form {
+  margin-bottom: 14px;
+}
+
+.guess-form label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 850;
+}
+
+.guess-row {
+  flex-wrap: nowrap;
+}
+
+.guess-row input {
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 14px;
+  background: #fff;
+  color: var(--ink);
+  outline: none;
+}
+
+.guess-row input:focus {
+  border-color: var(--green-dark);
+  box-shadow: 0 0 0 3px rgba(29, 117, 76, 0.16);
+}
+
+.guess-row button {
+  min-width: 96px;
+}
+
+.status {
+  min-height: 24px;
+  margin: 8px 0 16px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.status.win {
+  color: var(--green-dark);
+}
+
+.status.lose {
+  color: var(--red);
+}
+
+.table-wrap {
+  overflow-x: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.guess-table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: separate;
+  border-spacing: 5px;
+  table-layout: fixed;
+  --name-col: 1.45fr;
+}
+
+th,
+td {
+  padding: 7px 5px;
+  border: 3px solid #111;
+  border-radius: 7px;
+  text-align: center;
+  vertical-align: middle;
+  font-size: clamp(0.58rem, 0.78vw, 0.76rem);
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+th {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #4d5b55;
+  font-size: clamp(0.58rem, 0.72vw, 0.7rem);
+  text-transform: uppercase;
+}
+
+.pokemon-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.pokemon-cell img,
+.simple-guess img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  background: #fff;
+  border: 2px solid #111;
+  border-radius: 6px;
+}
+
+.hit {
+  background: var(--green);
+}
+
+.partial {
+  background: var(--gold);
+}
+
+.miss {
+  background: var(--red);
+}
+
+.hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 7px;
+  padding: 3px 8px;
+  font-weight: 900;
+}
+
+.simple-board {
+  display: none;
+  gap: 9px;
+  flex-direction: column;
+}
+
+.simple-board.active {
+  display: flex;
+}
+
+.simple-guess {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(520px, 100%);
+  min-height: 78px;
+  border: 4px solid #111;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #111;
+  font-size: clamp(1rem, 2.1vw, 1.45rem);
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.simple-guess.correct {
+  background: var(--green);
+}
+
+.simple-guess.wrong {
+  background: var(--red);
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    width: min(100% - 18px, 720px);
+    padding: 9px 0;
+  }
+
+  .topbar,
+  .game-grid {
+    display: block;
+  }
+
+  .topbar,
+  .challenge-tabs,
+  .guess-panel,
+  .clue-panel {
+    padding: 16px;
+  }
+
+  .top-actions {
+    margin-top: 16px;
+  }
+
+  .clue-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .clue-stage {
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+.stage-attributes.no-visual {
+  display: none;
+}
+
+.stage-attributes.no-visual + .clue-prompt {
+  margin-top: 18px;
+}
+
+
+.challenge-button.completed::after {
+  content: " done";
+  font-size: 0.72em;
+  font-weight: 900;
+}
+
+.challenge-button.locked {
+  color: #7b8782;
+  background: #eef2f0;
+}
+
+.results-panel {
+  display: none;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
+}
+
+.results-panel.active {
+  display: block;
+}
+
+.results-panel h2 {
+  margin: 0 0 12px;
+  font-size: 1.2rem;
+}
+
+.result-list {
+  display: grid;
+  gap: 8px;
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #f8fbf9;
+}
+
+.result-row span,
+.result-row strong {
+  font-weight: 900;
+}
+
+.result-row small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+@media (max-width: 680px) {
+  .result-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
+.guess-table th:first-child,
+.guess-table td:first-child {
+  width: 18%;
+}
+
+.pokemon-cell span {
+  display: block;
+  max-width: 100%;
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.hint {
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.arrow {
+  display: inline-block;
+  font-size: 1.35em;
+  line-height: 0.8;
+}
+
+.reveal-row td {
+  animation: columnFlip 460ms ease both;
+  transform-origin: center;
+  backface-visibility: hidden;
+}
+
+.reveal-row td:nth-child(1) { animation-delay: 0ms; }
+.reveal-row td:nth-child(2) { animation-delay: 90ms; }
+.reveal-row td:nth-child(3) { animation-delay: 180ms; }
+.reveal-row td:nth-child(4) { animation-delay: 270ms; }
+.reveal-row td:nth-child(5) { animation-delay: 360ms; }
+.reveal-row td:nth-child(6) { animation-delay: 450ms; }
+.reveal-row td:nth-child(7) { animation-delay: 540ms; }
+.reveal-row td:nth-child(8) { animation-delay: 630ms; }
+.reveal-row td:nth-child(9) { animation-delay: 720ms; }
+
+@keyframes columnFlip {
+  0% {
+    opacity: 0;
+    transform: rotateY(-92deg) scale(0.96);
+  }
+  55% {
+    opacity: 1;
+    transform: rotateY(12deg) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: rotateY(0deg) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-row td {
+    animation: none;
+  }
+}
