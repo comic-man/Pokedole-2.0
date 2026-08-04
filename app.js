@@ -42,9 +42,16 @@ const state = {
   completed: new Map(),
   unlockedIndex: 0,
   finished: false,
+  hasStarted: false,
+  revealedTypeHints: new Set(),
 };
 
 const els = {
+  setupScreen: document.querySelector("#setupScreen"),
+  gameScreen: document.querySelector("#gameScreen"),
+  startGameBtn: document.querySelector("#startGameBtn"),
+  setupStatus: document.querySelector("#setupStatus"),
+  changeSettingsBtn: document.querySelector("#changeSettingsBtn"),
   dailyBtn: document.querySelector("#dailyBtn"),
   randomBtn: document.querySelector("#randomBtn"),
   challengeButtons: [...document.querySelectorAll(".challenge-button")],
@@ -65,6 +72,7 @@ const els = {
   entryText: document.querySelector("#entryText"),
   cluePrompt: document.querySelector("#cluePrompt"),
   clueHint: document.querySelector("#clueHint"),
+  typeHints: document.querySelector("#typeHints"),
   resultsPanel: document.querySelector("#resultsPanel"),
 };
 
@@ -81,7 +89,9 @@ async function init() {
     state.activeGenerations = new Set(state.generations.map((gen) => gen.id));
     renderGenerationFilters();
     renderDatalist();
-    await startRound("daily");
+    updateRoundButtons();
+    updateChallengeButtons();
+    showSetup("Choose Daily or Random, pick generations, then start.");
   } catch (error) {
     console.error(error);
     setStatus("Could not load Pokemon data. Check your connection and refresh.", "lose");
@@ -91,15 +101,41 @@ async function init() {
 }
 
 function bindEvents() {
-  els.dailyBtn.addEventListener("click", () => startRound("daily"));
-  els.randomBtn.addEventListener("click", () => startRound("random"));
+  els.dailyBtn.addEventListener("click", () => setRoundMode("daily"));
+  els.randomBtn.addEventListener("click", () => setRoundMode("random"));
+  els.startGameBtn.addEventListener("click", () => startRound(state.roundMode));
+  els.changeSettingsBtn.addEventListener("click", () => showSetup("Adjust your run settings, then start a new game."));
   els.guessForm.addEventListener("submit", handleGuess);
   els.guessInput.addEventListener("input", () => renderDatalist(els.guessInput.value));
   els.challengeButtons.forEach((button) => {
     button.addEventListener("click", () => switchChallenge(button.dataset.challenge));
   });
+  els.typeHints.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-type-hint]");
+    if (!button) return;
+    revealTypeHint(Number(button.dataset.typeHint));
+  });
 }
 
+function showSetup(message = "") {
+  state.hasStarted = false;
+  els.setupScreen.hidden = false;
+  els.gameScreen.hidden = true;
+  els.changeSettingsBtn.hidden = true;
+  if (message) els.setupStatus.textContent = message;
+  setBusy(false);
+}
+
+function showGame() {
+  els.setupScreen.hidden = true;
+  els.gameScreen.hidden = false;
+  els.changeSettingsBtn.hidden = false;
+}
+
+function selectionSummary() {
+  const count = state.activeGenerations.size;
+  return `${count} ${pluralize("generation", count)} selected. ${state.roundMode === "daily" ? "Daily resets at midnight UTC." : "Random creates a fresh sequence each start."}`;
+}
 async function loadPokedex() {
   const cached = readCache();
   if (cached) return cached;
@@ -147,10 +183,18 @@ function readCache() {
   }
 }
 
+function setRoundMode(roundMode) {
+  state.roundMode = roundMode;
+  updateRoundButtons();
+  showSetup(roundMode === "daily" ? "Daily resets at midnight UTC." : "Random creates a fresh sequence each start.");
+}
+
 async function startRound(roundMode = state.roundMode) {
-  if (!state.pokemon.length) return;
+  if (!state.pokemon.length || !state.activeGenerations.size) return;
 
   state.roundMode = roundMode;
+  state.hasStarted = true;
+  showGame();
   state.challenge = CHALLENGE_ORDER[0];
   state.answers.clear();
   state.completed.clear();
@@ -185,6 +229,7 @@ async function setupChallenge(challenge) {
   state.finished = false;
   state.answerDetails = null;
   state.card = null;
+  state.revealedTypeHints.clear();
   els.guessBody.innerHTML = "";
   els.simpleBoard.innerHTML = "";
   els.guessInput.value = "";
@@ -216,12 +261,11 @@ async function setupChallenge(challenge) {
 }
 function getAnswerForChallenge(challenge) {
   const pool = state.pokemon.filter((entry) => state.activeGenerations.has(entry.generation));
-  const key = `${state.roundMode}:${challenge}:${[...state.activeGenerations].join("-")}`;
+  const key = `${state.roundMode}:${dailySeedKey(challenge)}:${[...state.activeGenerations].join("-")}`;
   if (state.answers.has(key)) return state.answers.get(key);
 
-  const offset = Object.keys(CHALLENGES).indexOf(challenge) * 9973;
   const index = state.roundMode === "daily"
-    ? dailyIndex(pool.length, offset)
+    ? seededIndex(pool.length, dailySeedKey(challenge))
     : cryptoRandom(pool.length);
   const answer = pool[index];
   state.answers.set(key, answer);
@@ -237,6 +281,7 @@ function resetClueStage() {
   els.pokemonImage.removeAttribute("src");
   els.cardImage.removeAttribute("src");
   els.entryText.textContent = "";
+  els.typeHints.innerHTML = "";
   els.cluePrompt.textContent = CHALLENGES[state.challenge].prompt;
   els.clueHint.textContent = CHALLENGES[state.challenge].hint;
 }
@@ -258,7 +303,11 @@ function renderClue() {
       els.clueStage.classList.add("has-card");
       updateProgressiveReveal();
     } else {
-      els.cluePrompt.textContent = "No TCG card art was found for this Pokemon.";
+      els.pokemonImage.src = details.sprite;
+      els.pokemonImage.alt = "Blurred Pokemon artwork";
+      els.clueStage.classList.add("has-pokemon", "card-fallback-art");
+      els.clueHint.textContent = "TCG card art was unavailable, so this round uses blurred Pokemon artwork.";
+      updateProgressiveReveal();
     }
     return;
   }
@@ -309,6 +358,7 @@ async function handleGuess(event) {
     els.guessInput.value = "";
     updateGuessCount();
     updateProgressiveReveal();
+    renderTypeHints();
 
     if (correct) {
       finishRound();
@@ -365,22 +415,60 @@ async function getPokemonDetails(entry) {
 }
 
 async function getCardArt(entry) {
-  const params = new URLSearchParams({
-    q: `nationalPokedexNumbers:${entry.id}`,
-    orderBy: "-set.releaseDate",
-    pageSize: "20",
-    select: "id,name,nationalPokedexNumbers,images,set",
-  });
-  const result = await fetchJson(`${TCG_API}?${params.toString()}`);
-  const cards = (result.data || []).filter((card) =>
-    card.nationalPokedexNumbers?.includes(entry.id) && card.images?.large,
-  );
+  try {
+    const params = new URLSearchParams({
+      q: `nationalPokedexNumbers:${entry.id}`,
+      orderBy: "-set.releaseDate",
+      pageSize: "20",
+      select: "id,name,nationalPokedexNumbers,images,set",
+    });
+    const result = await fetchJson(`${TCG_API}?${params.toString()}`);
+    const cards = (result.data || []).filter((card) =>
+      card.nationalPokedexNumbers?.includes(entry.id) && card.images?.large,
+    );
 
-  const exact = cards.find((card) => normalize(card.name) === normalize(entry.displayName));
-  const plain = cards.find((card) => !/[ -](ex|gx|v|vmax|vstar|break|mega)\b/i.test(card.name));
-  return exact || plain || cards[0] || null;
+    const exact = cards.find((card) => normalize(card.name) === normalize(entry.displayName));
+    const plain = cards.find((card) => !/[ -](ex|gx|v|vmax|vstar|break|mega)\b/i.test(card.name));
+    return exact || plain || cards[0] || null;
+  } catch (error) {
+    console.warn("Pokemon TCG lookup failed", error);
+    return null;
+  }
 }
 
+function renderTypeHints() {
+  if (!canUseTypeHints() || !state.answerDetails || state.finished) {
+    els.typeHints.innerHTML = "";
+    return;
+  }
+
+  const types = state.answerDetails.types;
+  const hints = [];
+  if (state.guesses.length >= 5) hints.push(typeHintMarkup(0, types[0], "Type 1"));
+  if (state.guesses.length >= 8) hints.push(typeHintMarkup(1, types[1], "Type 2"));
+
+  els.typeHints.innerHTML = hints.join("");
+}
+
+function typeHintMarkup(index, type, label) {
+  if (!type) return `<span class="type-hint empty">${label}: None</span>`;
+  if (state.revealedTypeHints.has(index)) {
+    return `<span class="type-hint revealed">${label}: ${escapeHtml(titleCase(type))}</span>`;
+  }
+  return `<button class="type-hint-button" type="button" data-type-hint="${index}">Reveal ${label}</button>`;
+}
+
+function revealTypeHint(index) {
+  if (!canUseTypeHints()) return;
+  const requiredGuesses = index === 0 ? 5 : 8;
+  if (state.guesses.length < requiredGuesses) return;
+  state.revealedTypeHints.add(index);
+  renderTypeHints();
+}
+
+function canUseTypeHints() {
+  return state.challenge === "card" || state.challenge === "entry";
+}
 function updateProgressiveReveal() {
   const wrongGuesses = state.guesses.filter((guess) => guess.name !== state.answer.name).length;
 
@@ -409,7 +497,7 @@ function renderGenerationFilters() {
     state.activeGenerations = new Set(state.generations.map((gen) => gen.id));
     updateFilterButtons();
     renderDatalist(els.guessInput.value);
-    startRound(state.roundMode);
+    showSetup(selectionSummary());
   });
   els.generationFilters.append(all);
 
@@ -428,7 +516,7 @@ function renderGenerationFilters() {
       }
       updateFilterButtons();
       renderDatalist(els.guessInput.value);
-      startRound(state.roundMode);
+      showSetup(selectionSummary());
     });
     els.generationFilters.append(button);
   });
@@ -552,13 +640,14 @@ function updateGuessCount() {
 function setBusy(isBusy) {
   els.guessInput.disabled = isBusy || state.finished;
   els.guessButton.disabled = isBusy || state.finished;
-  els.dailyBtn.disabled = isBusy;
-  els.randomBtn.disabled = isBusy;
+  els.dailyBtn.disabled = isBusy && state.hasStarted;
+  els.randomBtn.disabled = isBusy && state.hasStarted;
+  els.startGameBtn.disabled = isBusy || !state.pokemon.length || !state.activeGenerations.size;
   els.challengeButtons.forEach((button) => {
     button.disabled = isBusy || !isChallengeUnlocked(button.dataset.challenge);
   });
   els.generationFilters.querySelectorAll("button").forEach((button) => {
-    button.disabled = isBusy;
+    button.disabled = isBusy && state.hasStarted;
   });
 }
 
@@ -686,12 +775,20 @@ async function fetchJson(url) {
   return response.json();
 }
 
-function dailyIndex(length, offset = 0) {
-  const date = new Date();
-  const key = `${date.getUTCFullYear()}-${date.getUTCMonth() + 1}-${date.getUTCDate()}:${offset}`;
-  let hash = 0;
-  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+function seededIndex(length, seed) {
+  let hash = 2166136261;
+  for (const char of seed) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
   return hash % length;
+}
+
+function dailySeedKey(challenge) {
+  const date = new Date();
+  const utcDay = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  const generations = [...state.activeGenerations].sort((a, b) => a - b).join("-");
+  return `${utcDay}:${challenge}:${generations}`;
 }
 
 function cryptoRandom(length) {
@@ -748,6 +845,10 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
+
+
+
 
 
 

@@ -606,3 +606,120 @@ th {
     animation: none;
   }
 }
+
+.setup-screen {
+  padding: 28px;
+  background: var(--panel-soft);
+}
+
+.setup-panel {
+  display: grid;
+  gap: 24px;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 24px;
+  background: #fff;
+}
+
+.setup-panel h2,
+.setup-panel h3 {
+  margin: 0;
+}
+
+.setup-panel h2 {
+  font-size: clamp(1.7rem, 3vw, 2.4rem);
+}
+
+.setup-group {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.start-button {
+  min-height: 48px;
+  border-radius: 7px;
+  padding: 0 18px;
+  background: var(--green-dark);
+  color: #fff;
+  font-weight: 900;
+}
+
+.setup-status {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.settings-button[hidden],
+.game-screen[hidden],
+.setup-screen[hidden] {
+  display: none;
+}
+
+.stage-card.card-fallback-art .pokemon-art {
+  display: block;
+  max-width: 78%;
+  max-height: 78%;
+  filter: blur(var(--blur, 22px)) saturate(0.85);
+}
+
+.stage-card.card-fallback-art.revealed .pokemon-art {
+  filter: none;
+}
+
+.stage-entry {
+  aspect-ratio: auto;
+  min-height: clamp(220px, 32vw, 420px);
+  height: auto;
+  overflow: visible;
+}
+
+.stage-entry.has-entry {
+  place-items: center;
+}
+
+.stage-entry .entry-text {
+  width: 100%;
+  font-size: clamp(1.05rem, 1.55vw, 1.5rem);
+  overflow-wrap: anywhere;
+}
+
+.type-hints {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.type-hint-button,
+.type-hint {
+  min-height: 34px;
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-weight: 900;
+}
+
+.type-hint-button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--deep-2);
+}
+
+.type-hint.revealed {
+  background: var(--gold);
+  color: #1d1a0a;
+}
+
+.type-hint.empty {
+  background: #e8efec;
+  color: var(--muted);
+}
