@@ -1,0 +1,117 @@
+import { StrictMode, useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  getActiveUser,
+  loginUser,
+  logoutUser,
+  registerUser,
+  subscribeAuth,
+} from "./auth.js";
+import "../styles.css";
+
+function AuthPanel() {
+  const [user, setUser] = useState(() => getActiveUser());
+  const [isCreating, setIsCreating] = useState(false);
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => subscribeAuth(setUser), []);
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    try {
+      const nextUser = isCreating
+        ? registerUser(identifier, password)
+        : loginUser(identifier, password);
+      setUser(nextUser);
+      setIdentifier("");
+      setPassword("");
+      setMessage(isCreating ? "Account created." : "Logged in.");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  if (user) {
+    return (
+      <section className="auth-card" aria-label="User account">
+        <div>
+          <span className="auth-label">Signed in</span>
+          <strong>{user.identifier}</strong>
+        </div>
+        <div className="streak-pill" title="Consecutive daily clears while logged in">
+          <span>{user.streak}</span>
+          day streak
+        </div>
+        <button className="mode-button" type="button" onClick={logoutUser}>Log out</button>
+      </section>
+    );
+  }
+
+  return (
+    <form className="auth-card auth-form" onSubmit={handleSubmit}>
+      <label>
+        <span>Username or email</span>
+        <input
+          value={identifier}
+          onChange={(event) => setIdentifier(event.target.value)}
+          autoComplete="username"
+          required
+        />
+      </label>
+      <label>
+        <span>Password</span>
+        <input
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          type="password"
+          autoComplete={isCreating ? "new-password" : "current-password"}
+          required
+        />
+      </label>
+      <div className="auth-actions">
+        <button className="mode-button active" type="submit">{isCreating ? "Create" : "Log in"}</button>
+        <button className="mode-button" type="button" onClick={() => setIsCreating(!isCreating)}>
+          {isCreating ? "Use login" : "New user"}
+        </button>
+      </div>
+      <p className="auth-message" role="status">{message}</p>
+    </form>
+  );
+}
+
+function App() {
+  useEffect(() => { import("../app.js"); }, []);
+
+  return (
+    <main className="app-shell">
+      <section className="play-surface">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">All-generation Pokemon guessing game</p>
+            <h1 id="game-title">Pokedole 2.0</h1>
+          </div>
+          <div className="topbar-actions">
+            <AuthPanel />
+            <button id="changeSettingsBtn" className="mode-button settings-button" type="button" hidden>Settings</button>
+          </div>
+        </header>
+        <section id="setupScreen" className="setup-screen">
+          <div className="setup-panel">
+            <div><p className="eyebrow">Setup</p><h2>Choose Your Run</h2></div>
+            <div className="setup-group"><h3>Round Type</h3><div className="top-actions" aria-label="Round type"><button id="dailyBtn" className="mode-button active" type="button">Daily</button><button id="randomBtn" className="mode-button" type="button">Random</button></div></div>
+            <div className="setup-group"><h3>Generations</h3><div className="filters" id="generationFilters" aria-label="Generation filters" /></div>
+            <div className="setup-actions"><button id="startGameBtn" className="start-button" type="button">Start Game</button><p id="setupStatus" className="setup-status" role="status">Building the Pokedex...</p></div>
+          </div>
+        </section>
+        <section id="gameScreen" className="game-screen" hidden>
+          <nav className="challenge-tabs" aria-label="Game modes">{[["attributes","Attributes"],["card","Card Blur"],["entry","Dex Entry"],["silhouette","Silhouette"]].map(([id,label]) => <button key={id} className={"challenge-button" + (id === "attributes" ? " active" : "")} type="button" data-challenge={id}>{label}</button>)}</nav>
+          <section className="game-grid"><aside className="clue-panel" aria-label="Mystery clue"><div className="score-strip"><span id="roundLabel">Daily</span><strong id="guessCount">0 guesses</strong></div><div id="clueStage" className="clue-stage stage-attributes"><div id="loadingMark" className="loading-mark">?</div><img id="pokemonImage" className="pokemon-art" alt="Mystery Pokemon clue" /><img id="cardImage" className="card-art" alt="Mystery Pokemon card" /><p id="entryText" className="entry-text" /></div><p id="cluePrompt" className="clue-prompt">Building the Pokedex...</p><p id="clueHint" className="clue-hint" /><div id="typeHints" className="type-hints" aria-live="polite" /></aside><section className="guess-panel"><form id="guessForm" className="guess-form" autoComplete="off"><label htmlFor="guessInput">Guess a Pokemon</label><div className="guess-row"><input id="guessInput" name="guess" list="pokemonOptions" placeholder="Start typing a name" /><button id="guessButton" type="submit">Guess</button></div><datalist id="pokemonOptions" /></form><div id="status" className="status" role="status">Building the Pokedex...</div><div id="attributeBoard" className="table-wrap"><table className="guess-table" aria-label="Attribute guesses"><thead><tr>{["Pokemon","Type 1","Type 2","Gen","Habitat","Color","Stage","Height","Weight"].map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody id="guessBody" /></table></div><div id="simpleBoard" className="simple-board" aria-label="Guesses" /><section id="resultsPanel" className="results-panel" aria-live="polite" /></section></section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")).render(<StrictMode><App /></StrictMode>);
