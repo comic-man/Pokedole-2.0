@@ -1,3 +1,4 @@
+import { recordDailyCompletion } from "./src/auth.js";
 const POKE_API = "https://pokeapi.co/api/v2";
 const TCG_API = "https://api.pokemontcg.io/v2/cards";
 const CACHE_KEY = "pokedole:v2:pokedex";
@@ -603,8 +604,12 @@ function finishRound() {
   }
 
   updateChallengeButtons();
-  setStatus(`${state.roundMode === "daily" ? "Daily" : "Random"} complete. You solved all four games.`, "win");
-  renderResults();
+  const streakResult = state.roundMode === "daily" ? recordDailyCompletion() : null;
+  const streakMessage = streakResult?.updated
+    ? ` ${streakResult.user.streak} day streak.`
+    : "";
+  setStatus(`${state.roundMode === "daily" ? "Daily" : "Random"} complete. You solved all four games.${streakMessage}`, "win");
+  renderResults(streakResult);
 }
 function findGuess(value) {
   const wanted = normalize(value);
@@ -660,7 +665,7 @@ function isChallengeUnlocked(challenge) {
   return index >= 0 && index <= state.unlockedIndex;
 }
 
-function renderResults() {
+function renderResults(streakResult = null) {
   const rows = CHALLENGE_ORDER.map((challenge) => {
     const result = state.completed.get(challenge);
     return `
@@ -673,10 +678,17 @@ function renderResults() {
   }).join("");
 
   const total = [...state.completed.values()].reduce((sum, result) => sum + result.guesses, 0);
+  const streakNote = streakResult?.user
+    ? `<p>Current streak: <strong>${streakResult.user.streak} ${pluralize("day", streakResult.user.streak)}</strong></p>`
+    : state.roundMode === "daily"
+      ? `<p>Log in before completing the daily run to track your streak.</p>`
+      : "";
+
   els.resultsPanel.innerHTML = `
     <h2>${state.roundMode === "daily" ? "Daily" : "Random"} Results</h2>
     <div class="result-list">${rows}</div>
     <p>Total: <strong>${total} ${pluralize("guess", total)}</strong></p>
+    ${streakNote}
   `;
   els.resultsPanel.classList.add("active");
 }
