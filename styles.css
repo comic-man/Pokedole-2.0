@@ -1096,3 +1096,12 @@ td {
     border-bottom: 1px solid rgba(86, 215, 255, 0.28);
   }
 }
+
+.site-footer {
+  padding: 18px 8px 4px;
+  color: rgba(248, 251, 255, 0.72);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-align: center;
+  text-transform: uppercase;
+}

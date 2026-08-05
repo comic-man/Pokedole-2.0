@@ -89,7 +89,7 @@ function App() {
       <section className="play-surface">
         <header className="topbar">
           <div>
-            <p className="eyebrow">All-generation Pokemon guessing game</p>
+            <p className="eyebrow">Pokemon Guessing Game</p>
             <h1 id="game-title">Pokedole 2.0</h1>
           </div>
           <div className="topbar-actions">
@@ -110,6 +110,7 @@ function App() {
           <section className="game-grid"><aside className="clue-panel" aria-label="Mystery clue"><div className="score-strip"><span id="roundLabel">Daily</span><strong id="guessCount">0 guesses</strong></div><div id="clueStage" className="clue-stage stage-attributes"><div id="loadingMark" className="loading-mark">?</div><img id="pokemonImage" className="pokemon-art" alt="Mystery Pokemon clue" /><img id="cardImage" className="card-art" alt="Mystery Pokemon card" /><p id="entryText" className="entry-text" /></div><p id="cluePrompt" className="clue-prompt">Building the Pokedex...</p><p id="clueHint" className="clue-hint" /><div id="typeHints" className="type-hints" aria-live="polite" /></aside><section className="guess-panel"><form id="guessForm" className="guess-form" autoComplete="off"><label htmlFor="guessInput">Guess a Pokemon</label><div className="guess-row"><input id="guessInput" name="guess" list="pokemonOptions" placeholder="Start typing a name" /><button id="guessButton" type="submit">Guess</button></div><datalist id="pokemonOptions" /></form><div id="status" className="status" role="status">Building the Pokedex...</div><div id="attributeBoard" className="table-wrap"><table className="guess-table" aria-label="Attribute guesses"><thead><tr>{["Pokemon","Type 1","Type 2","Gen","Habitat","Color","Stage","Height","Weight"].map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody id="guessBody" /></table></div><div id="simpleBoard" className="simple-board" aria-label="Guesses" /><section id="resultsPanel" className="results-panel" aria-live="polite" /></section></section>
         </section>
       </section>
+      <footer className="site-footer">TM David Weidenbenner and Caleb Osborn</footer>
     </main>
   );
 }
