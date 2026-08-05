@@ -1,4 +1,4 @@
-﻿const POKE_API = "https://pokeapi.co/api/v2";
+const POKE_API = "https://pokeapi.co/api/v2";
 const TCG_API = "https://api.pokemontcg.io/v2/cards";
 const CACHE_KEY = "pokedole:v2:pokedex";
 
@@ -140,35 +140,7 @@ async function loadPokedex() {
   const cached = readCache();
   if (cached) return cached;
 
-  const generationList = await fetchJson(`${POKE_API}/generation?limit=100`);
-  const generationRefs = generationList.results
-    .map((gen) => ({ ...gen, id: idFromUrl(gen.url) }))
-    .filter((gen) => Number.isFinite(gen.id))
-    .sort((a, b) => a.id - b.id);
-
-  const generations = await Promise.all(
-    generationRefs.map(async (gen) => {
-      const detail = await fetchJson(gen.url);
-      return {
-        id: detail.id,
-        name: localName(detail.names, romanGeneration(detail.id)),
-        region: titleCase(detail.main_region?.name || ""),
-        species: detail.pokemon_species.map((species) => ({
-          id: idFromUrl(species.url),
-          name: species.name,
-          displayName: formatPokemonName(species.name),
-          generation: detail.id,
-        })),
-      };
-    }),
-  );
-
-  const pokemon = generations
-    .flatMap((gen) => gen.species)
-    .filter((entry) => Number.isFinite(entry.id))
-    .sort((a, b) => a.id - b.id);
-
-  const payload = { generations, pokemon, savedAt: Date.now() };
+  const payload = { ...(await fetchJson("/api/bootstrap")), savedAt: Date.now() };
   localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
   return payload;
 }
@@ -242,13 +214,16 @@ async function setupChallenge(challenge) {
   setStatus("Choosing a mystery Pokemon...");
 
   try {
-    state.answer = getAnswerForChallenge(challenge);
+    if (challenge === "card") {
+      const cardAnswer = await getCardAnswerForChallenge();
+      state.answer = cardAnswer.answer;
+      state.card = cardAnswer.card;
+    } else {
+      state.answer = getAnswerForChallenge(challenge);
+    }
+
     const details = await getPokemonDetails(state.answer);
     state.answerDetails = details;
-
-    if (challenge === "card") {
-      state.card = await getCardArt(state.answer);
-    }
 
     renderClue();
     setStatus(`${CHALLENGES[challenge].label} ready. Keep guessing until you solve it.`);
@@ -258,6 +233,28 @@ async function setupChallenge(challenge) {
   } finally {
     setBusy(false);
   }
+}
+async function getCardAnswerForChallenge() {
+  const pool = state.pokemon.filter((entry) => state.activeGenerations.has(entry.generation));
+  const key = `${state.roundMode}:${dailySeedKey("card")}:card-only`;
+  if (state.answers.has(key) && state.card) {
+    return { answer: state.answers.get(key), card: state.card };
+  }
+
+  const startIndex = state.roundMode === "daily"
+    ? seededIndex(pool.length, dailySeedKey("card"))
+    : cryptoRandom(pool.length);
+
+  for (let attempt = 0; attempt < pool.length; attempt += 1) {
+    const answer = pool[(startIndex + attempt) % pool.length];
+    const card = await getCardArt(answer);
+    if (card) {
+      state.answers.set(key, answer);
+      return { answer, card };
+    }
+  }
+
+  throw new Error("No Pokemon TCG cards found for the selected generations.");
 }
 function getAnswerForChallenge(challenge) {
   const pool = state.pokemon.filter((entry) => state.activeGenerations.has(entry.generation));
@@ -288,7 +285,7 @@ function resetClueStage() {
 
 function renderClue() {
   const details = state.answerDetails;
-  els.roundLabel.textContent = `${state.roundMode === "daily" ? "Daily" : "Random"} - Gen ${details.generation}`;
+  els.roundLabel.textContent = state.roundMode === "daily" ? "Daily" : "Random";
 
   if (state.challenge === "attributes") {
     els.clueStage.classList.add("no-visual");
@@ -297,18 +294,10 @@ function renderClue() {
   }
 
   if (state.challenge === "card") {
-    if (state.card) {
-      els.cardImage.src = state.card.images.large;
-      els.cardImage.alt = "Blurred Pokemon card";
-      els.clueStage.classList.add("has-card");
-      updateProgressiveReveal();
-    } else {
-      els.pokemonImage.src = details.sprite;
-      els.pokemonImage.alt = "Blurred Pokemon artwork";
-      els.clueStage.classList.add("has-pokemon", "card-fallback-art");
-      els.clueHint.textContent = "TCG card art was unavailable, so this round uses blurred Pokemon artwork.";
-      updateProgressiveReveal();
-    }
+    els.cardImage.src = state.card.images.large;
+    els.cardImage.alt = `Blurred ${state.card.name} Pokemon card`;
+    els.clueStage.classList.add("has-card");
+    updateProgressiveReveal();
     return;
   }
 
@@ -419,21 +408,36 @@ async function getCardArt(entry) {
     const params = new URLSearchParams({
       q: `nationalPokedexNumbers:${entry.id}`,
       orderBy: "-set.releaseDate",
-      pageSize: "20",
-      select: "id,name,nationalPokedexNumbers,images,set",
+      pageSize: "30",
+      select: "id,name,supertype,nationalPokedexNumbers,images,set",
     });
     const result = await fetchJson(`${TCG_API}?${params.toString()}`);
     const cards = (result.data || []).filter((card) =>
-      card.nationalPokedexNumbers?.includes(entry.id) && card.images?.large,
+      card.supertype === "Pokémon" &&
+      card.nationalPokedexNumbers?.includes(entry.id) &&
+      card.images?.large &&
+      cardNameMatchesPokemon(card.name, entry),
     );
 
-    const exact = cards.find((card) => normalize(card.name) === normalize(entry.displayName));
+    const exact = cards.find((card) => normalizeCardName(card.name) === normalizePokemonCardName(entry.displayName));
     const plain = cards.find((card) => !/[ -](ex|gx|v|vmax|vstar|break|mega)\b/i.test(card.name));
     return exact || plain || cards[0] || null;
   } catch (error) {
     console.warn("Pokemon TCG lookup failed", error);
     return null;
   }
+}
+
+function cardNameMatchesPokemon(cardName, entry) {
+  return normalizeCardName(cardName).startsWith(normalizePokemonCardName(entry.displayName));
+}
+
+function normalizeCardName(name) {
+  return normalize(String(name).replace(/\b(ex|gx|vmax|vstar|v-union|v|break|lvx|prime|radiant|shining|dark|light)\b/gi, ""));
+}
+
+function normalizePokemonCardName(name) {
+  return normalize(String(name).replace(/\b(male|female)\b/gi, ""));
 }
 
 function renderTypeHints() {
@@ -845,6 +849,9 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
+
+
 
 
 

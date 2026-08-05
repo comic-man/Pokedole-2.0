@@ -665,16 +665,6 @@ th {
   display: none;
 }
 
-.stage-card.card-fallback-art .pokemon-art {
-  display: block;
-  max-width: 78%;
-  max-height: 78%;
-  filter: blur(var(--blur, 22px)) saturate(0.85);
-}
-
-.stage-card.card-fallback-art.revealed .pokemon-art {
-  filter: none;
-}
 
 .stage-entry {
   aspect-ratio: auto;
@@ -723,3 +713,4 @@ th {
   background: #e8efec;
   color: var(--muted);
 }
+
